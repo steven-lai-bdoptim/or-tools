@@ -59,19 +59,6 @@ class HighsSolver : public SolverInterface {
       const SolveParametersProto& parameters, MessageCallback message_cb,
       const SolveInterrupter* absl_nullable interrupter) override;
 
- private:
-  struct SolutionClaims {
-    bool highs_returned_primal_feasible_solution = false;
-    bool highs_returned_dual_feasible_solution = false;
-    bool highs_returned_primal_ray = false;
-    bool highs_returned_dual_ray = false;
-  };
-  struct SolutionsAndClaims {
-    std::vector<SolutionProto> solutions;
-    // TODO(b/271104776): add rays.
-    SolutionClaims solution_claims;
-  };
-
   // Tracks the upper and lower bounds for either a variable or linear
   // constraint in the HiGHS model.
   //
@@ -101,10 +88,25 @@ class HighsSolver : public SolverInterface {
     IndexAndBound(int index, double lb, double ub, bool is_integer)
         : index(index), lb(lb), ub(ub), is_integer(is_integer) {}
   };
-  HighsSolver(std::unique_ptr<Highs> highs,
+
+ private:
+  struct SolutionClaims {
+    bool highs_returned_primal_feasible_solution = false;
+    bool highs_returned_dual_feasible_solution = false;
+    bool highs_returned_primal_ray = false;
+    bool highs_returned_dual_ray = false;
+  };
+  struct SolutionsAndClaims {
+    std::vector<SolutionProto> solutions;
+    // TODO(b/271104776): add rays.
+    SolutionClaims solution_claims;
+  };
+
+  HighsSolver(std::unique_ptr<Highs> highs, ModelProto model,
               absl::flat_hash_map<int64_t, IndexAndBound> variable_data,
               absl::flat_hash_map<int64_t, IndexAndBound> lin_con_data)
       : highs_(std::move(highs)),
+        model_(std::move(model)),
         variable_data_(std::move(variable_data)),
         lin_con_data_(std::move(lin_con_data)) {}
 
@@ -165,6 +167,7 @@ class HighsSolver : public SolverInterface {
   InvertedBounds ListInvertedBounds();
 
   std::unique_ptr<Highs> highs_;
+  ModelProto model_;
 
   // Key is the mathopt id, value.index is the variable index in HiGHS.
   absl::flat_hash_map<int64_t, IndexAndBound> variable_data_;

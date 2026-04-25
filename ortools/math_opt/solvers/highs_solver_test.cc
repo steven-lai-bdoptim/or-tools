@@ -268,6 +268,41 @@ TEST(HighsSolverTest, FractionalBoundsForIntegerVariables) {
               IsOkAndHolds(IsOptimalWithSolution(1.0, {{x, 1.0}})));
 }
 
+TEST(HighsSolverTest, NativeMultiObjectiveSolve) {
+  Model model;
+  const Variable x = model.AddContinuousVariable(0.0, 2.0, "x");
+  const Variable y = model.AddContinuousVariable(0.0, 2.0, "y");
+  model.AddLinearConstraint(x + y <= 2.0);
+  model.Maximize(x);
+  const Objective aux =
+      model.AddMaximizationObjective(y, /*priority=*/1, "maximize_y");
+
+  ASSERT_OK_AND_ASSIGN(const SolveResult result, Solve(model, SolverType::kHighs));
+  EXPECT_TRUE(result.termination.IsOptimal());
+  EXPECT_DOUBLE_EQ(result.objective_value(), 2.0);
+  EXPECT_DOUBLE_EQ(result.objective_value(aux), 0.0);
+  EXPECT_DOUBLE_EQ(result.variable_values().at(x), 2.0);
+  EXPECT_DOUBLE_EQ(result.variable_values().at(y), 0.0);
+}
+
+TEST(HighsSolverTest, MultiObjectivePerObjectiveTimeLimitErrors) {
+  Model model;
+  const Variable x = model.AddContinuousVariable(0.0, 2.0, "x");
+  const Variable y = model.AddContinuousVariable(0.0, 2.0, "y");
+  model.AddLinearConstraint(x + y <= 2.0);
+  model.Maximize(x);
+  const Objective aux =
+      model.AddMaximizationObjective(y, /*priority=*/1, "maximize_y");
+
+  SolveArguments args;
+  args.model_parameters.objective_parameters[aux].time_limit =
+      absl::Milliseconds(1);
+  EXPECT_THAT(
+      Solve(model, SolverType::kHighs, args),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("does not support per-objective time_limit")));
+}
+
 TEST(HighsSolverTest, IterationLimitTooLarge) {
   Model model;
   const Variable x = model.AddContinuousVariable(0.0, 1.0);

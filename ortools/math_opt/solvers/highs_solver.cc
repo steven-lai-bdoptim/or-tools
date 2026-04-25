@@ -34,6 +34,7 @@
 #include "absl/base/nullability.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
@@ -74,10 +75,152 @@ namespace {
 
 constexpr absl::string_view kOutputFlag = "output_flag";
 constexpr absl::string_view kLogToConsole = "log_to_console";
+constexpr absl::string_view kBlendMultiObjectives = "blend_multi_objectives";
 
 constexpr SupportedProblemStructures kHighsSupportedStructures = {
     .integer_variables = SupportType::kSupported,
+    .multi_objectives = SupportType::kSupported,
     .quadratic_objectives = SupportType::kNotImplemented};
+
+struct ObjectiveData {
+  std::optional<int64_t> auxiliary_objective_id;
+  const ObjectiveProto* objective = nullptr;
+};
+
+const ObjectiveParametersProto& EmptyObjectiveParameters() {
+  static const auto* const empty = new ObjectiveParametersProto();
+  return *empty;
+}
+
+absl::Status ValidateUniqueObjectivePriorities(const ModelProto& model) {
+  absl::flat_hash_set<int64_t> priorities = {model.objective().priority()};
+  for (const auto& [id, objective] : model.auxiliary_objectives()) {
+    const int64_t priority = objective.priority();
+    if (!priorities.insert(priority).second) {
+      return util::InvalidArgumentErrorBuilder()
+             << "repeated objective priority: " << priority;
+    }
+  }
+  return absl::OkStatus();
+}
+
+std::vector<ObjectiveData> SortedObjectives(const ModelProto& model) {
+  std::vector<ObjectiveData> result;
+  result.reserve(1 + model.auxiliary_objectives().size());
+  result.push_back(
+      {.auxiliary_objective_id = std::nullopt, .objective = &model.objective()});
+  for (const auto& [id, objective] : model.auxiliary_objectives()) {
+    result.push_back(
+        {.auxiliary_objective_id = id, .objective = &objective});
+  }
+  absl::c_sort(result, [](const ObjectiveData& lhs, const ObjectiveData& rhs) {
+    return lhs.objective->priority() < rhs.objective->priority();
+  });
+  return result;
+}
+
+const ObjectiveParametersProto& GetObjectiveParameters(
+    const ModelSolveParametersProto& model_parameters,
+    const ObjectiveData& objective_data) {
+  if (!objective_data.auxiliary_objective_id.has_value()) {
+    return model_parameters.primary_objective_parameters();
+  }
+  const auto it = model_parameters.auxiliary_objective_parameters().find(
+      *objective_data.auxiliary_objective_id);
+  if (it == model_parameters.auxiliary_objective_parameters().end()) {
+    return EmptyObjectiveParameters();
+  }
+  return it->second;
+}
+
+absl::StatusOr<SolveParametersProto> MergeTimeLimits(
+    const SolveParametersProto& base_parameters,
+    const ObjectiveParametersProto& objective_parameters,
+    const absl::Time overall_start) {
+  SolveParametersProto result = base_parameters;
+  absl::Duration effective_limit = absl::InfiniteDuration();
+  bool has_effective_limit = false;
+  if (base_parameters.has_time_limit()) {
+    ASSIGN_OR_RETURN(const absl::Duration total_limit,
+                     util_time::DecodeGoogleApiProto(base_parameters.time_limit()));
+    effective_limit = std::max(total_limit - (absl::Now() - overall_start),
+                               absl::ZeroDuration());
+    has_effective_limit = true;
+  }
+  if (objective_parameters.has_time_limit()) {
+    ASSIGN_OR_RETURN(
+        const absl::Duration objective_limit,
+        util_time::DecodeGoogleApiProto(objective_parameters.time_limit()));
+    effective_limit =
+        has_effective_limit ? std::min(effective_limit, objective_limit)
+                            : objective_limit;
+    has_effective_limit = true;
+  }
+  if (has_effective_limit) {
+    OR_ASSIGN_OR_RETURN3(*result.mutable_time_limit(),
+                         util_time::EncodeGoogleApiProto(effective_limit),
+                         _ << "error encoding effective time limit");
+  } else {
+    result.clear_time_limit();
+  }
+  return result;
+}
+
+bool HasPerObjectiveTimeLimit(const ModelSolveParametersProto& model_parameters,
+                              const bool multi_objective_model) {
+  if (!multi_objective_model) {
+    return false;
+  }
+  if (model_parameters.has_primary_objective_parameters() &&
+      model_parameters.primary_objective_parameters().has_time_limit()) {
+    return true;
+  }
+  for (const auto& [id, params] :
+       model_parameters.auxiliary_objective_parameters()) {
+    (void)id;
+    if (params.has_time_limit()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+double ObjectiveValue(const ObjectiveProto& objective,
+                      const HighsSolution& highs_solution,
+                      const absl::flat_hash_map<int64_t,
+                                                HighsSolver::IndexAndBound>&
+                          variable_data) {
+  double result = objective.offset();
+  for (const auto [id, coefficient] : MakeView(objective.linear_coefficients())) {
+    result += coefficient * highs_solution.col_value[variable_data.at(id).index];
+  }
+  return result;
+}
+
+absl::StatusOr<HighsLinearObjective> MakeHighsLinearObjective(
+    const ObjectiveProto& objective,
+    const ObjectiveParametersProto& objective_parameters,
+    const absl::flat_hash_map<int64_t, HighsSolver::IndexAndBound>& variable_data,
+    const int num_vars) {
+  HighsLinearObjective result;
+  result.weight = objective.maximize() ? -1.0 : 1.0;
+  result.offset = objective.offset();
+  result.coefficients.assign(num_vars, 0.0);
+  for (const auto [var_id, coefficient] :
+       MakeView(objective.linear_coefficients())) {
+    result.coefficients[variable_data.at(var_id).index] = coefficient;
+  }
+  if (objective_parameters.has_objective_degradation_absolute_tolerance()) {
+    result.abs_tolerance =
+        objective_parameters.objective_degradation_absolute_tolerance();
+  }
+  if (objective_parameters.has_objective_degradation_relative_tolerance()) {
+    result.rel_tolerance =
+        objective_parameters.objective_degradation_relative_tolerance();
+  }
+  result.priority = objective.priority();
+  return result;
+}
 
 absl::Status ToStatus(const HighsStatus status) {
   switch (status) {
@@ -793,6 +936,7 @@ HighsSolver::ExtractSolutionAndRays(
 absl::StatusOr<std::unique_ptr<SolverInterface>> HighsSolver::New(
     const ModelProto& model, const InitArgs&) {
   RETURN_IF_ERROR(ModelIsSupported(model, kHighsSupportedStructures, "Highs"));
+  RETURN_IF_ERROR(ValidateUniqueObjectivePriorities(model));
   HighsModel highs_model;
   HighsLp& lp = highs_model.lp_;
   lp.model_name_ = model.name();
@@ -906,7 +1050,7 @@ absl::StatusOr<std::unique_ptr<SolverInterface>> HighsSolver::New(
   RETURN_IF_ERROR(ToStatus(highs->passOptions(disable_output)));
   RETURN_IF_ERROR(ToStatus(highs->passModel(std::move(highs_model))));
   return absl::WrapUnique(new HighsSolver(
-      std::move(highs), std::move(variable_data), std::move(lin_con_data)));
+      std::move(highs), model, std::move(variable_data), std::move(lin_con_data)));
 }
 
 absl::StatusOr<SolveResultProto> HighsSolver::Solve(
@@ -924,6 +1068,51 @@ absl::StatusOr<SolveResultProto> HighsSolver::Solve(
                          _ << "error encoding solve_stats.solve_time");
     return absl::OkStatus();
   };
+  const bool is_multi_objective_model = !model_.auxiliary_objectives().empty();
+  if (HasPerObjectiveTimeLimit(model_parameters, is_multi_objective_model)) {
+    return absl::InvalidArgumentError(
+        "HiGHS native multi-objective does not support per-objective "
+        "time_limit");
+  }
+  const auto finalize_multi_objective_result =
+      [this](SolveResultProto result) -> absl::StatusOr<SolveResultProto> {
+    *result.mutable_termination()->mutable_objective_bounds() =
+        MakeTrivialBounds(model_.objective().maximize());
+    if (!result.solutions().empty() && result.solutions(0).has_primal_solution() &&
+        highs_->getModelStatus() != HighsModelStatus::kModelEmpty) {
+      const HighsSolution& highs_solution = highs_->getSolution();
+      if (highs_solution.value_valid) {
+        const double primary_objective_value =
+            ObjectiveValue(model_.objective(), highs_solution, variable_data_);
+        PrimalSolutionProto* const primal_solution =
+            result.mutable_solutions(0)->mutable_primal_solution();
+        primal_solution->set_objective_value(primary_objective_value);
+        auto* const auxiliary_values =
+            primal_solution->mutable_auxiliary_objective_values();
+        auxiliary_values->clear();
+        for (const int64_t id : SortedMapKeys(model_.auxiliary_objectives())) {
+          (*auxiliary_values)[id] = ObjectiveValue(
+              model_.auxiliary_objectives().at(id), highs_solution,
+              variable_data_);
+        }
+        result.mutable_termination()->mutable_objective_bounds()->set_primal_bound(
+            primary_objective_value);
+        if (result.termination().reason() == TERMINATION_REASON_OPTIMAL) {
+          result.mutable_termination()->mutable_objective_bounds()->set_dual_bound(
+              primary_objective_value);
+        }
+      }
+    }
+    for (int i = 0; i < result.solutions_size(); ++i) {
+      result.mutable_solutions(i)->clear_dual_solution();
+      result.mutable_solutions(i)->clear_basis();
+    }
+    return result;
+  };
+  ASSIGN_OR_RETURN(const SolveParametersProto effective_parameters,
+                   MergeTimeLimits(parameters,
+                                   model_parameters.primary_objective_parameters(),
+                                   start));
 
   if (!model_parameters.solution_hints().empty()) {
     // Take the first solution hint and set the solution.
@@ -989,9 +1178,30 @@ absl::StatusOr<SolveResultProto> HighsSolver::Solve(
   }
   ASSIGN_OR_RETURN(
       const std::unique_ptr<HighsOptions> options,
-      MakeOptions(parameters,
+      MakeOptions(effective_parameters,
                   buffered_message_callback.has_user_message_callback(),
                   is_integer));
+  RETURN_IF_ERROR(ToStatus(highs_->clearLinearObjectives()));
+  if (is_multi_objective_model) {
+    if (parameters.highs().bool_options().contains(kBlendMultiObjectives) &&
+        parameters.highs().bool_options().at(kBlendMultiObjectives)) {
+      return absl::InvalidArgumentError(
+          "HiGHS blend_multi_objectives=true conflicts with MathOpt "
+          "hierarchical multi-objective semantics");
+    }
+    const std::vector<ObjectiveData> objectives = SortedObjectives(model_);
+    const int num_vars = highs_->getModel().lp_.num_col_;
+    for (const ObjectiveData& objective_data : objectives) {
+      ASSIGN_OR_RETURN(
+          const HighsLinearObjective highs_objective,
+          MakeHighsLinearObjective(
+              *objective_data.objective,
+              GetObjectiveParameters(model_parameters, objective_data),
+              variable_data_, num_vars));
+      RETURN_IF_ERROR(ToStatus(highs_->addLinearObjective(highs_objective)));
+    }
+    options->blend_multi_objectives = false;
+  }
   RETURN_IF_ERROR(ToStatus(highs_->passOptions(*options)));
   RETURN_IF_ERROR(ToStatus(highs_->run()));
   std::move(message_cb_cleanup).Invoke();
@@ -1015,13 +1225,19 @@ absl::StatusOr<SolveResultProto> HighsSolver::Solve(
   }
   ASSIGN_OR_RETURN(*result.mutable_termination(),
                    MakeTermination(highs_->getModelStatus(), info, is_integer,
-                                   parameters.has_node_limit(),
-                                   parameters.has_solution_limit(), is_maximize,
+                                   effective_parameters.has_node_limit(),
+                                   effective_parameters.has_solution_limit(),
+                                   is_multi_objective_model
+                                       ? model_.objective().maximize()
+                                       : is_maximize,
                                    solutions_and_claims.solution_claims));
 
   ASSIGN_OR_RETURN(*result.mutable_solve_stats(), ToSolveStats(info));
 
   RETURN_IF_ERROR(set_solve_time(result));
+  if (is_multi_objective_model) {
+    ASSIGN_OR_RETURN(result, finalize_multi_objective_result(std::move(result)));
+  }
   return result;
 }
 
