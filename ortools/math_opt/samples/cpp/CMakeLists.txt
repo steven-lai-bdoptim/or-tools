@@ -31,6 +31,8 @@ if(BUILD_CXX_SAMPLES)
   list(FILTER CXX_SRCS EXCLUDE REGEX "integer_programming.cc$")
   list(FILTER CXX_SRCS EXCLUDE REGEX "linear_programming.cc$")
   list(FILTER CXX_SRCS EXCLUDE REGEX "linear_regression.cc$")
+  # built explicitly below with a custom target name
+  list(FILTER CXX_SRCS EXCLUDE REGEX "diet_problem.cc$")
 
 
   foreach(SAMPLE IN LISTS CXX_SRCS)
@@ -38,4 +40,20 @@ if(BUILD_CXX_SAMPLES)
       FILE_NAME ${SAMPLE}
       COMPONENT_NAME math_opt)
   endforeach()
+
+  add_executable(math_opt_diet_multi_obj diet_problem.cc)
+  target_compile_features(math_opt_diet_multi_obj PRIVATE cxx_std_17)
+  target_link_libraries(math_opt_diet_multi_obj PRIVATE ${PROJECT_NAMESPACE}::ortools)
+  include(GNUInstallDirs)
+  if(APPLE)
+    set_target_properties(math_opt_diet_multi_obj PROPERTIES INSTALL_RPATH
+      "@loader_path/../${CMAKE_INSTALL_LIBDIR};@loader_path")
+  elseif(UNIX)
+    cmake_path(RELATIVE_PATH CMAKE_INSTALL_FULL_LIBDIR
+      BASE_DIRECTORY ${CMAKE_INSTALL_FULL_BINDIR}
+      OUTPUT_VARIABLE libdir_relative_path)
+    set_target_properties(math_opt_diet_multi_obj PROPERTIES
+      INSTALL_RPATH "$ORIGIN/${libdir_relative_path}")
+  endif()
+  install(TARGETS math_opt_diet_multi_obj)
 endif()
