@@ -10,7 +10,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 if(NOT BUILD_SAMPLES)
   return()
 endif()
@@ -25,8 +24,9 @@ if(BUILD_CXX_SAMPLES)
     list(FILTER CXX_SRCS EXCLUDE REGEX "lagrangian_relaxation.cc$")
     list(FILTER CXX_SRCS EXCLUDE REGEX "time_indexed_scheduling.cc$")
   endif()
-  # conflict name
+  # Name conflicts with samples in other components.
   list(FILTER CXX_SRCS EXCLUDE REGEX "basic_example.cc$")
+  list(FILTER CXX_SRCS EXCLUDE REGEX "diet_problem.cc$")
   list(FILTER CXX_SRCS EXCLUDE REGEX "tsp.cc$")
   list(FILTER CXX_SRCS EXCLUDE REGEX "integer_programming.cc$")
   list(FILTER CXX_SRCS EXCLUDE REGEX "linear_programming.cc$")
@@ -38,4 +38,52 @@ if(BUILD_CXX_SAMPLES)
       FILE_NAME ${SAMPLE}
       COMPONENT_NAME math_opt)
   endforeach()
+
+  set(SAMPLE_NAME math_opt_basic_example)
+  set(SAMPLE_FILE basic_example.cc)
+  add_executable(${SAMPLE_NAME} ${SAMPLE_FILE})
+  target_include_directories(${SAMPLE_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_features(${SAMPLE_NAME} PRIVATE cxx_std_17)
+  target_link_libraries(${SAMPLE_NAME} PRIVATE ${PROJECT_NAMESPACE}::ortools)
+
+  include(GNUInstallDirs)
+  if(APPLE)
+    set_target_properties(${SAMPLE_NAME} PROPERTIES INSTALL_RPATH
+      "@loader_path/../${CMAKE_INSTALL_LIBDIR};@loader_path")
+  elseif(UNIX)
+    cmake_path(RELATIVE_PATH CMAKE_INSTALL_FULL_LIBDIR
+      BASE_DIRECTORY ${CMAKE_INSTALL_FULL_BINDIR}
+      OUTPUT_VARIABLE libdir_relative_path)
+    set_target_properties(${SAMPLE_NAME} PROPERTIES
+      INSTALL_RPATH "$ORIGIN/${libdir_relative_path}")
+  endif()
+  install(TARGETS ${SAMPLE_NAME})
+
+  if(BUILD_TESTING)
+    add_test(
+      NAME cxx_math_opt_${SAMPLE_NAME}
+      COMMAND ${SAMPLE_NAME})
+  endif()
+
+  set(SAMPLE_NAME math_opt_diet_problem)
+  set(SAMPLE_FILE diet_problem.cc)
+  add_executable(${SAMPLE_NAME} ${SAMPLE_FILE})
+  target_include_directories(${SAMPLE_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_features(${SAMPLE_NAME} PRIVATE cxx_std_17)
+  target_link_libraries(${SAMPLE_NAME} PRIVATE ${PROJECT_NAMESPACE}::ortools)
+
+  if(APPLE)
+    set_target_properties(${SAMPLE_NAME} PROPERTIES INSTALL_RPATH
+      "@loader_path/../${CMAKE_INSTALL_LIBDIR};@loader_path")
+  elseif(UNIX)
+    set_target_properties(${SAMPLE_NAME} PROPERTIES
+      INSTALL_RPATH "$ORIGIN/${libdir_relative_path}")
+  endif()
+  install(TARGETS ${SAMPLE_NAME})
+
+  if(BUILD_TESTING)
+    add_test(
+      NAME cxx_math_opt_${SAMPLE_NAME}
+      COMMAND ${SAMPLE_NAME})
+  endif()
 endif()

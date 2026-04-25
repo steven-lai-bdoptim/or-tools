@@ -45,7 +45,7 @@ absl::Status Main() {
   objective_expression += y;
   model.Maximize(objective_expression);
   ASSIGN_OR_RETURN(const math_opt::SolveResult result,
-                   Solve(model, math_opt::SolverType::kGscip));
+                   Solve(model, math_opt::SolverType::kHighs));
   RETURN_IF_ERROR(result.termination.EnsureIsOptimalOrFeasible());
   std::cout << "Objective value: " << result.objective_value() << std::endl
             << "Value for variable x: " << result.variable_values().at(x)
