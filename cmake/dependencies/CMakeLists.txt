@@ -105,6 +105,30 @@ if(BUILD_BZip2)
 endif()
 
 # ##############################################################################
+# GOOGLETEST  (must be before absl: ABSL_BUILD_TEST_HELPERS needs gtest target)
+# ##############################################################################
+if(BUILD_googletest)
+  message(CHECK_START "Fetching googletest")
+  list(APPEND CMAKE_MESSAGE_INDENT "  ")
+  FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.17.0
+    GIT_SHALLOW TRUE
+    UPDATE_COMMAND git reset --hard
+    PATCH_COMMAND git apply --ignore-whitespace
+    "${CMAKE_CURRENT_LIST_DIR}/../../patches/googletest-v1.17.0.patch"
+    SYSTEM
+  )
+  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+  set(GTEST_HAS_ABSL ON)
+  set(INSTALL_GTEST ON)
+  FetchContent_MakeAvailable(googletest)
+  list(POP_BACK CMAKE_MESSAGE_INDENT)
+  message(CHECK_PASS "fetched")
+endif()
+
+# ##############################################################################
 # ABSEIL-CPP
 # ##############################################################################
 if(BUILD_absl)
@@ -141,6 +165,32 @@ if(BUILD_absl)
 endif()
 
 # ##############################################################################
+# RE2  (must be before Protobuf to avoid re2::re2 alias conflicts)
+# ##############################################################################
+if(BUILD_re2)
+  message(CHECK_START "Fetching re2")
+  if(TARGET re2::re2)
+    message(CHECK_PASS "already available")
+  else()
+    list(APPEND CMAKE_MESSAGE_INDENT "  ")
+    FetchContent_Declare(
+      re2
+      GIT_REPOSITORY "https://github.com/google/re2.git"
+      GIT_TAG "2025-08-12"
+      GIT_SHALLOW TRUE
+      UPDATE_COMMAND git reset --hard
+      PATCH_COMMAND git apply --ignore-whitespace
+      "${CMAKE_CURRENT_LIST_DIR}/../../patches/re2-2025-08-12.patch"
+      SYSTEM
+    )
+    set(RE2_BUILD_TESTING OFF)
+    FetchContent_MakeAvailable(re2)
+    list(POP_BACK CMAKE_MESSAGE_INDENT)
+    message(CHECK_PASS "fetched")
+  endif()
+endif()
+
+# ##############################################################################
 # Protobuf
 # ##############################################################################
 if(BUILD_Protobuf)
@@ -164,28 +214,6 @@ if(BUILD_Protobuf)
   set(protobuf_MSVC_STATIC_RUNTIME OFF)
   #set(protobuf_BUILD_LIBUPB ON)
   FetchContent_MakeAvailable(Protobuf)
-  list(POP_BACK CMAKE_MESSAGE_INDENT)
-  message(CHECK_PASS "fetched")
-endif()
-
-# ##############################################################################
-# RE2
-# ##############################################################################
-if(BUILD_re2)
-  message(CHECK_START "Fetching re2")
-  list(APPEND CMAKE_MESSAGE_INDENT "  ")
-  FetchContent_Declare(
-    re2
-    GIT_REPOSITORY "https://github.com/google/re2.git"
-    GIT_TAG "2025-08-12"
-    GIT_SHALLOW TRUE
-    UPDATE_COMMAND git reset --hard
-    PATCH_COMMAND git apply --ignore-whitespace
-    "${CMAKE_CURRENT_LIST_DIR}/../../patches/re2-2025-08-12.patch"
-    SYSTEM
-  )
-  set(RE2_BUILD_TESTING OFF)
-  FetchContent_MakeAvailable(re2)
   list(POP_BACK CMAKE_MESSAGE_INDENT)
   message(CHECK_PASS "fetched")
 endif()
@@ -545,26 +573,7 @@ endif()
 ###############
 ##  TESTING  ##
 ###############
-if(BUILD_googletest)
-  message(CHECK_START "Fetching googletest")
-  list(APPEND CMAKE_MESSAGE_INDENT "  ")
-  FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG v1.17.0
-    GIT_SHALLOW TRUE
-    UPDATE_COMMAND git reset --hard
-    PATCH_COMMAND git apply --ignore-whitespace
-    "${CMAKE_CURRENT_LIST_DIR}/../../patches/googletest-v1.17.0.patch"
-    SYSTEM
-  )
-  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-  set(GTEST_HAS_ABSL ON)
-  set(INSTALL_GTEST ON)
-  FetchContent_MakeAvailable(googletest)
-  list(POP_BACK CMAKE_MESSAGE_INDENT)
-  message(CHECK_PASS "fetched")
-endif()
+# (googletest moved earlier — needed before absl)
 
 if(BUILD_protobuf_matchers)
   message(CHECK_START "Fetching protobuf-matchers")

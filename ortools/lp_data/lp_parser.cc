@@ -364,14 +364,15 @@ TokenType LPParser::ConsumeToken(StringPiece* sp) {
 
 StatusOr<ParsedConstraint> ParseConstraint(absl::string_view constraint) {
   ParsedConstraint parsed_constraint;
+  StringPiece remaining{constraint};
   // Get the name, if present.
-  StringPiece constraint_copy{constraint};
+  StringPiece constraint_copy{remaining};
   std::string consumed_name;
   Fractional consumed_coeff;
   if (ConsumeToken(&constraint_copy, &consumed_name, &consumed_coeff) ==
       TokenType::NAME) {
     parsed_constraint.name = consumed_name;
-    constraint = constraint_copy;
+    remaining = constraint_copy;
   }
 
   Fractional left_bound;
@@ -382,16 +383,16 @@ StatusOr<ParsedConstraint> ParseConstraint(absl::string_view constraint) {
 
   // Get the left bound and the relation sign, if present.
   TokenType token_type =
-      ConsumeToken(&constraint, &consumed_name, &consumed_coeff);
+      ConsumeToken(&remaining, &consumed_name, &consumed_coeff);
   if (TokenIsBound(token_type)) {
     left_bound = consumed_coeff;
-    left_sign = ConsumeToken(&constraint, &consumed_name, &consumed_coeff);
+    left_sign = ConsumeToken(&remaining, &consumed_name, &consumed_coeff);
     if (left_sign != TokenType::SIGN_LE && left_sign != TokenType::SIGN_EQ &&
         left_sign != TokenType::SIGN_GE) {
       return absl::InvalidArgumentError(
           "Expected an equality/inequality sign for the left bound.");
     }
-    token_type = ConsumeToken(&constraint, &consumed_name, &consumed_coeff);
+    token_type = ConsumeToken(&remaining, &consumed_name, &consumed_coeff);
   }
 
   // Get the addands, if present.
@@ -403,7 +404,7 @@ StatusOr<ParsedConstraint> ParseConstraint(absl::string_view constraint) {
     used_variables.insert(consumed_name);
     parsed_constraint.variable_names.push_back(consumed_name);
     parsed_constraint.coefficients.push_back(consumed_coeff);
-    token_type = ConsumeToken(&constraint, &consumed_name, &consumed_coeff);
+    token_type = ConsumeToken(&remaining, &consumed_name, &consumed_coeff);
   }
 
   // If the left sign was EQ there can be no right side.
@@ -426,14 +427,15 @@ StatusOr<ParsedConstraint> ParseConstraint(absl::string_view constraint) {
           "Equality constraints can have only one bound.");
     }
     if (!TokenIsBound(
-            ConsumeToken(&constraint, &consumed_name, &consumed_coeff))) {
+            ConsumeToken(&remaining, &consumed_name, &consumed_coeff))) {
       return absl::InvalidArgumentError("Bound value was expected.");
     }
     right_bound = consumed_coeff;
-    if (ConsumeToken(&constraint, &consumed_name, &consumed_coeff) !=
+    if (ConsumeToken(&remaining, &consumed_name, &consumed_coeff) !=
         TokenType::END) {
       return absl::InvalidArgumentError(
-          absl::StrCat("End of input was expected, found: ", constraint));
+          absl::StrCat("End of input was expected, found: ",
+                       std::string(remaining.data(), remaining.size())));
     }
   }
 
