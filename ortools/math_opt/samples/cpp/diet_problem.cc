@@ -17,16 +17,10 @@
 //   1. maximize total protein,
 //   2. then, among protein-optimal diets, minimize total cost,
 // while meeting per-nutrient lower and upper bounds.
-//
-//   lexicographic:
-//      max   sum_f protein[f] * x[f]
-//      min   sum_f cost[f] * x[f]
-//   s.t.  nmin[n] <= sum_f amount[f][n] * x[f] <= nmax[n]   for each nutrient n
-//         x[f] >= 0                                         for each food f
 
+#include <cstddef>
 #include <iostream>
 #include <limits>
-#include <ostream>
 #include <string>
 #include <vector>
 
@@ -74,7 +68,6 @@ absl::Status Main() {
 
   math_opt::Model model("diet");
 
-  // One non-negative continuous variable per food (number of servings).
   std::vector<math_opt::Variable> servings;
   servings.reserve(foods.size());
   for (const Food& food : foods) {
@@ -82,10 +75,9 @@ absl::Status Main() {
         0.0, std::numeric_limits<double>::infinity(), food.name));
   }
 
-  // Nutrient range constraints.
-  for (int n = 0; n < nutrients.size(); ++n) {
+  for (std::size_t n = 0; n < nutrients.size(); ++n) {
     math_opt::LinearExpression intake;
-    for (int f = 0; f < foods.size(); ++f) {
+    for (std::size_t f = 0; f < foods.size(); ++f) {
       intake += foods[f].nutrients[n] * servings[f];
     }
     model.AddLinearConstraint(intake >= nutrients[n].min,
@@ -94,17 +86,14 @@ absl::Status Main() {
                               nutrients[n].name + "_max");
   }
 
-  // Primary objective: maximize total protein.
   math_opt::LinearExpression total_protein;
-  for (int f = 0; f < foods.size(); ++f) {
+  for (std::size_t f = 0; f < foods.size(); ++f) {
     total_protein += foods[f].nutrients[1] * servings[f];
   }
   model.Maximize(total_protein);
-  //const math_opt::Objective max_protein = model.AddMaximizationObjective(total_protein, 0, "protein");
 
-  // Secondary objective: among protein-optimal diets, minimize total cost.
   math_opt::LinearExpression total_cost;
-  for (int f = 0; f < foods.size(); ++f) {
+  for (std::size_t f = 0; f < foods.size(); ++f) {
     total_cost += foods[f].cost * servings[f];
   }
   const math_opt::Objective min_cost =
@@ -119,7 +108,7 @@ absl::Status Main() {
   std::cout << "Minimum daily cost at max protein: "
             << result.objective_value(min_cost) << std::endl;
   std::cout << "Servings:" << std::endl;
-  for (int f = 0; f < foods.size(); ++f) {
+  for (std::size_t f = 0; f < foods.size(); ++f) {
     std::cout << "  " << foods[f].name << ": "
               << result.variable_values().at(servings[f]) << std::endl;
   }

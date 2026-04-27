@@ -104,6 +104,27 @@ absl::Status ValidateUniqueObjectivePriorities(const ModelProto& model) {
   return absl::OkStatus();
 }
 
+int64_t MaxObjectivePriority(const ModelProto& model) {
+  int64_t result = model.objective().priority();
+  for (const auto& [id, objective] : model.auxiliary_objectives()) {
+    (void)id;
+    result = std::max(result, objective.priority());
+  }
+  return result;
+}
+
+absl::StatusOr<HighsInt> ToHighsPriority(
+    const int64_t mathopt_priority, const int64_t max_mathopt_priority) {
+  if (max_mathopt_priority > std::numeric_limits<HighsInt>::max()) {
+    return util::InvalidArgumentErrorBuilder()
+           << "HiGHS objective priorities must fit in HighsInt, but found "
+           << max_mathopt_priority;
+  }
+  // MathOpt optimizes lower priority values first, while HiGHS optimizes
+  // higher priority values first.
+  return static_cast<HighsInt>(max_mathopt_priority - mathopt_priority);
+}
+
 std::vector<ObjectiveData> SortedObjectives(const ModelProto& model) {
   std::vector<ObjectiveData> result;
   result.reserve(1 + model.auxiliary_objectives().size());
@@ -201,7 +222,7 @@ absl::StatusOr<HighsLinearObjective> MakeHighsLinearObjective(
     const ObjectiveProto& objective,
     const ObjectiveParametersProto& objective_parameters,
     const absl::flat_hash_map<int64_t, HighsSolver::IndexAndBound>& variable_data,
-    const int num_vars) {
+    const int num_vars, const int64_t max_mathopt_priority) {
   HighsLinearObjective result;
   result.weight = objective.maximize() ? -1.0 : 1.0;
   result.offset = objective.offset();
@@ -210,15 +231,23 @@ absl::StatusOr<HighsLinearObjective> MakeHighsLinearObjective(
        MakeView(objective.linear_coefficients())) {
     result.coefficients[variable_data.at(var_id).index] = coefficient;
   }
-  if (objective_parameters.has_objective_degradation_absolute_tolerance()) {
+  const bool has_absolute_tolerance =
+      objective_parameters.has_objective_degradation_absolute_tolerance();
+  const bool has_relative_tolerance =
+      objective_parameters.has_objective_degradation_relative_tolerance();
+  if (!has_absolute_tolerance && !has_relative_tolerance) {
+    result.abs_tolerance = 0.0;
+  }
+  if (has_absolute_tolerance) {
     result.abs_tolerance =
         objective_parameters.objective_degradation_absolute_tolerance();
   }
-  if (objective_parameters.has_objective_degradation_relative_tolerance()) {
+  if (has_relative_tolerance) {
     result.rel_tolerance =
         objective_parameters.objective_degradation_relative_tolerance();
   }
-  result.priority = objective.priority();
+  ASSIGN_OR_RETURN(result.priority,
+                   ToHighsPriority(objective.priority(), max_mathopt_priority));
   return result;
 }
 
@@ -1190,6 +1219,7 @@ absl::StatusOr<SolveResultProto> HighsSolver::Solve(
           "hierarchical multi-objective semantics");
     }
     const std::vector<ObjectiveData> objectives = SortedObjectives(model_);
+    const int64_t max_mathopt_priority = MaxObjectivePriority(model_);
     const int num_vars = highs_->getModel().lp_.num_col_;
     for (const ObjectiveData& objective_data : objectives) {
       ASSIGN_OR_RETURN(
@@ -1197,7 +1227,7 @@ absl::StatusOr<SolveResultProto> HighsSolver::Solve(
           MakeHighsLinearObjective(
               *objective_data.objective,
               GetObjectiveParameters(model_parameters, objective_data),
-              variable_data_, num_vars));
+              variable_data_, num_vars, max_mathopt_priority));
       RETURN_IF_ERROR(ToStatus(highs_->addLinearObjective(highs_objective)));
     }
     options->blend_multi_objectives = false;

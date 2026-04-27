@@ -246,7 +246,7 @@ INSTANTIATE_TEST_SUITE_P(HighsInfeasibleSubsystemTest, InfeasibleSubsystemTest,
 MultiObjectiveTestParameters GetHighsMultiObjectiveTestParameters() {
   return MultiObjectiveTestParameters(
       /*solver_type=*/SolverType::kHighs, /*parameters=*/SolveParameters(),
-      /*supports_auxiliary_objectives=*/false,
+      /*supports_auxiliary_objectives=*/true,
       /*supports_incremental_objective_add_and_delete=*/false,
       /*supports_incremental_objective_modification=*/false,
       /*supports_integer_variables=*/true);

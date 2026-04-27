@@ -374,9 +374,11 @@ TEST_P(SimpleMultiObjectiveTest,
   if (!GetParam().supports_integer_variables) {
     GTEST_SKIP() << kNoIntegerVariableSupportMessage;
   }
-  if (GetParam().solver_type == SolverType::kXpress) {
-    GTEST_SKIP() << "Ignoring this test because Xpress does not support per "
-                    "objective time limits at the moment";
+  if (GetParam().solver_type == SolverType::kXpress ||
+      GetParam().solver_type == SolverType::kHighs) {
+    GTEST_SKIP()
+        << "Ignoring this test because the solver does not support per "
+           "objective time limits at the moment";
   }
   ASSERT_OK_AND_ASSIGN(const std::unique_ptr<Model> model,
                        Load23588MiplibInstance());
@@ -409,9 +411,11 @@ TEST_P(SimpleMultiObjectiveTest,
   if (!GetParam().supports_integer_variables) {
     GTEST_SKIP() << kNoIntegerVariableSupportMessage;
   }
-  if (GetParam().solver_type == SolverType::kXpress) {
-    GTEST_SKIP() << "Ignoring this test because Xpress does not support per "
-                    "objective time limits at the moment";
+  if (GetParam().solver_type == SolverType::kXpress ||
+      GetParam().solver_type == SolverType::kHighs) {
+    GTEST_SKIP()
+        << "Ignoring this test because the solver does not support per "
+           "objective time limits at the moment";
   }
   ASSERT_OK_AND_ASSIGN(const std::unique_ptr<Model> model,
                        Load23588MiplibInstance());
